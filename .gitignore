@@ -1,0 +1,4 @@
+/src/*
+/summary/*
+/__pycache__/*
+main.py
