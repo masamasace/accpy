@@ -5,6 +5,7 @@ import datetime
 from matplotlib import pyplot as plt
 import types
 
+
 plt.rcParams["font.family"] = "Arial"
 plt.rcParams["mathtext.fontset"] = "dejavuserif" 
 plt.rcParams["legend.fancybox"] = False
@@ -12,8 +13,106 @@ plt.rcParams["legend.shadow"] = True
 plt.rcParams["legend.framealpha"] = 1
 plt.rcParams["legend.edgecolor"] = "k"
 
+class AccelerometerData():
+
+    def __init__(self):
+        
+        self.data = None
+        self.data_path = None
+        self.gain = None
+        # 基線補正を計算するために最初から何個のデータを使うか
+        self.bc_index = None
+        self.value_offset = None
+        self.time_offset = None
+        self.time_range = None
+        self.stats = None
+        self.fft = None
+        self.result_path = None
+    
+    def get_data(self):
+        return self.data
+    
+    def clear_data(self):
+        self.data = None
+    
+    def update(self, **kwargs):
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+            else:
+                raise AttributeError("No such attribute: {}".format(key))
+        
+        self._check_value_type()
+
+        if self.data is not None:
+
+            self._calc_stats_fft(self.data)
+        
+        elif self.data_path is not None:
+            
+            self._read_data(self.data_path)
+            self._calc_stats_fft(self.data)
+    
+
+    def _read_data(self, data_path):
+        
+        msg = "This method must be implemented in the subclass."
+        raise NotImplementedError(msg)
+
+
+    def _calc_stats_fft(self, data):
+
+        self.stats = self._calc_stats(data)
+        self.fft = self._calc_fft(data)
+
+
+    def _calc_stats(self, data):
+
+        stats = {
+            "max": data[data[1:].abs().argmax(axis=0)],
+            "mean": data[1:].mean(),
+            "std": data[1:].std()
+        }
+
+        return stats
+
+
+    def _calc_fft(self, data):
+
+        N = len(data)
+        dt = data["time"].iloc[1] - data["time"].iloc[0]
+        freq = np.fft.rfftfreq(N, dt)
+
+        fft = pd.DataFrame(freq, columns=["freq"])
+        for column in data.columns[1:]:
+            fft[column] = np.abs(np.fft.rfft(data[column])) / N * 2 * data["time"].iloc[-1]
+        
+        return fft
+
+    def _check_value_type(self):
+
+        self._check_value_type_base(self.data, (None, pd.DataFrame))
+        self._check_value_type_base(self.data_path, (None, str, Path))
+        self._check_value_type_base(self.gain, (None, float))
+        self._check_value_type_base(self.bc_index, (None, int))
+        self._check_value_type_base(self.value_offset, (None, float))
+        self._check_value_type_base(self.time_offset, (None, float))
+        self._check_value_type_base(self.time_range, (None, tuple))
+        self._check_value_type_base(self.stats, (None, dict))
+        self._check_value_type_base(self.fft, (None, pd.DataFrame))
+        self._check_value_type_base(self.result_path, (None, str, Path))
+
+    def _check_value_type_base(self, value, *value_types):
+        if not isinstance(value, value_types):
+            raise ValueError("Value must be one of types: {}".format(value_types))
+
+# TODO: separate adxl355 and asw data class
 class ADXL355Data():
-    def __init__(self, file_path, gain=1, trim_indice=None):
+    def __init__(self,
+                 file_path,
+                 gain=2 * 980.665 / 2 ** 19,
+                 trim_indice=None
+                 reverse_axis):
         self.file_path = Path(file_path).resolve()
         self.result_path = self.file_path.parent / "result"
         self.gain = gain
@@ -27,7 +126,10 @@ class ADXL355Data():
 
     def _read_data(self):
 
-        self.data = pd.read_csv(self.file_path, header=None, names=['Time_ms', 'X_raw', 'Y_raw', 'Z_raw'])
+        self.data = pd.read_csv(self.file_path,
+                                header=None,
+                                names=['Time_ms', 'X_raw', 'Y_raw', 'Z_raw'],
+                                dtype=float)
 
     def _format_data(self, gain):
 
